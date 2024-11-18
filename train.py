@@ -4,227 +4,168 @@
   *  @author  Charan Karthikeyan P V, Nagireddi Jagadesh Nischal
   *
   *  @brief Main file to train and evaluate the model.  
- """
+"""
+
 import os
-import time
-import itertools
 import numpy as np
 import torch
 import torch.nn as nn
-from tqdm import tqdm
-tqdm.monitor_interval = 0
 import torch.optim as optim
-from torch.autograd import Variable
-from torch.utils.data import DataLoader
-from tensorboard_logger import configure, log_value
-from torch.utils.data.sampler import RandomSampler, SequentialSampler
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import RandomSampler
+from tqdm import tqdm
 import matplotlib.pyplot as plt
+import cv2
 from network_model import model_cnn
 from data_extractor import Features
 import utils
 import argparse
-from matplotlib import pyplot as plt
-import cv2
 
-# Global declaration of the arrays to plot the graphs.
+# Global arrays for plotting graphs
 loss_vals = []
 train_step = []
 val_step = []
 val_losses = []
-"""
-* @brief Function to train the model with the input data and save them.
-* @param The arguments containing the parameters 
-*  needed to train and generate the model.
-* @param The model to train the data with.
-* @param The split datatset to train.
-* @param The validation dataset.
-* @return None.
-"""
-def train_model(args, model, dataset_train, dataset_val):
-    # Imports the training model.
+
+def train_model(args, model, dataset_train, dataset_val, writer):
+    """Train the model with the input data and save it."""
     model.train()
-    #Declaration of the optimizer and the loss model.
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     criterion = nn.MSELoss()
-    step = 0 # steps initialization
-    imgs_per_batch = args.batch_size #gets the batch size from the argument parameters
+    step = 0
+    imgs_per_batch = args.batch_size
+
     optimizer.zero_grad()
-    for epoch in range(args.nb_epoch): # runs for the number of eposchs set in the arguments
+    for epoch in range(args.nb_epoch):
         sampler = RandomSampler(dataset_train, replacement=True, num_samples=args.samples_per_epoch)
         for i, sample_id in enumerate(sampler):
-            #未加时序帧进行训练
-            data = dataset_train[sample_id] #若前置帧不够，则正常训练放弃时序
-            label = data['steering_angle'] #, data['brake'], data['speed'], data['throttle']
+            # Load data
+            data = dataset_train[sample_id]
+            label = data['steering_angle']
             img_pth, label = utils.choose_image(label)
-            # Data augmentation and processing steps           
+
+            # Image preprocessing
             img = cv2.imread(data[img_pth])
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = utils.preprocess(img)
-            img, label = utils.random_flip(img, label)
-            img, label = utils.random_translate(img, label, 100, 10)
-            img = utils.random_shadow(img)
-            img = utils.random_brightness(img)
-            img = Variable(torch.cuda.FloatTensor([img]))
-            label = np.array([label]).astype(float)
-            label = Variable(torch.cuda.FloatTensor(label))
-            img = img.permute(0,3,1,2)
-            #training and loss calculation
+            img = cv2.resize(img, (224, 224))  # Resize to (224, 224)
+            img = img.transpose((2, 0, 1))  # Convert to [C, H, W]
+            img = img.astype(np.float32) / 255.0  # Normalize to [0, 1]
+
+            # Convert to PyTorch tensors
+            img = torch.tensor(img, dtype=torch.float32, device='cuda').unsqueeze(0)  # Add batch dimension
+            label = torch.tensor(label, dtype=torch.float32, device='cuda').view(-1, 1)  # Ensure shape is (batch_size, 1)
+
+            # Forward pass
             out_vec = model(img)
-            loss = criterion(out_vec,label)
+            loss = criterion(out_vec, label)
 
+            # Backward pass
             loss.backward()
-
-            if step%imgs_per_batch==0:
+            if step % imgs_per_batch == 0:
                 optimizer.step()
                 optimizer.zero_grad()
 
-            # Status update for the network. To see the working
-            if step%20==0:
-                log_str = \
-                    'Epoch: {} | Iter: {} | Step: {} | ' + \
-                    'Train Loss: {:.8f} |'
-                log_str = log_str.format(
-                    epoch,
-                    i,
-                    step,
-                    loss.item())
+            # Log training progress
+            if step % 20 == 0:
+                print(f'Epoch: {epoch} | Iter: {i} | Step: {step} | Train Loss: {loss.item():.8f}')
                 train_step.append(step)
                 loss_vals.append(loss.item())
-                #Uncomment the line below if you want to see the working
-                # print(log_str)
+                writer.add_scalar('Train/Loss', loss.item(), step)
 
-            if step%100==0:
-                log_value('train_loss',loss.item(),step)
-            
-            if step%5000==0:
-                # Validation of the model mid training for better understanding and visualization
-                val_loss = eval_model(model,dataset_val, num_samples=1470)
-                log_value('val_loss',val_loss,step)
-                log_str = \
-                    'Epoch: {} | Iter: {} | Step: {} | Val Loss: {:.8f}'
-                log_str = log_str.format(
-                    epoch,
-                    i,
-                    step,
-                    val_loss)
+            # Validate and save model checkpoint
+            if step % 5000 == 0:
+                val_loss = eval_model(model, dataset_val, num_samples=1470)
                 val_losses.append(val_loss)
                 val_step.append(step)
-                print(log_str)
-                model.train()  # resumes the training process
+                writer.add_scalar('Validation/Loss', val_loss, step)
+                print(f'Epoch: {epoch} | Iter: {i} | Step: {step} | Val Loss: {val_loss:.8f}')
+                model.train()  # Resume training mode
 
-            if step%5000==0:
-            	# Saves the intermediate points in the training process for testing in simulator.
+                # Save checkpoint
                 if not os.path.exists(args.model_dir):
                     os.makedirs(args.model_dir)
-
-                reflex_pth = os.path.join(
-                    args.model_dir,
-                    'model_{}'.format(step))
-                torch.save(
-                    model.state_dict(),
-                    reflex_pth)
+                reflex_pth = os.path.join(args.model_dir, f'model_{step}')
+                torch.save(model.state_dict(), reflex_pth)
 
             step += 1
 
-"""
-* @brief Function to evaluate the model generated by the training process
-* @param Model to be evaluated
-* @param The validation dataset
-* @param the sample size to evaluate.
-* @return The validarion loss.
-""" 
-def eval_model(model,dataset,num_samples):
+
+def eval_model(model, dataset, num_samples):
+    """Evaluate the trained model."""
     model.eval()
     criterion = nn.MSELoss()
-    step = 0
     val_loss = 0
     count = 0
     sampler = RandomSampler(dataset)
     torch.manual_seed(0)
-    for sample_id in tqdm(sampler):
-        if step==num_samples:
+    for step, sample_id in enumerate(tqdm(sampler)):
+        if step == num_samples:
             break
 
         data = dataset[sample_id]
         img_pth, label = utils.choose_image(data['steering_angle'])
-        # image preprocessing and augmentation.
         img = cv2.imread(data[img_pth])
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = utils.preprocess(img)
-        img, label = utils.random_flip(img, label)
-        img, label = utils.random_translate(img, label, 100, 10)
-        img = utils.random_shadow(img)
-        img = utils.random_brightness(img)
-        img = Variable(torch.cuda.FloatTensor([img]))
-        img = img.permute(0,3,1,2)
-        label = np.array([label]).astype(float)
-        label = Variable(torch.cuda.FloatTensor(label))
+        img = cv2.resize(img, (224, 224))  # Resize to (224, 224)
+        img = img.transpose((2, 0, 1))  # Convert to [C, H, W]
+        img = img.astype(np.float32) / 255.0  # Normalize to [0, 1]
 
+        # Convert to PyTorch tensors
+        img = torch.tensor(img, dtype=torch.float32, device='cuda').unsqueeze(0)
+        label = torch.tensor(label, dtype=torch.float32, device='cuda').view(-1, 1)
+
+        # Forward pass
         out_vec = model(img)
+        loss = criterion(out_vec, label)
 
-        loss = criterion(out_vec,label)
-
-        batch_size = 4
         val_loss += loss.data.item()
-        count += batch_size
-        step += 1
+        count += 1
 
-    val_loss = val_loss / float(count)
-    return val_loss
+    return val_loss / count
 
-"""
-* @brief The main file to run the training of the dataset and generate the model.
-* @param The arguments with the training parameters.
-* @return None.
-"""  
+
 def main(args):
-	#build and import the network model.
+    """Main function to run training."""
     model = model_cnn()
-    #Check for cuda availability
     if torch.cuda.is_available():
         model = model.cuda()
 
+    # TensorBoard setup
+    writer = SummaryWriter(log_dir='log/')
 
     print('Creating model ...')
-    #model = Reflex_CNN().cuda()
-    configure("log/")
     print('Creating data loaders ...')
     dataset = Features(args.data_dir)
     train_size = int(args.train_size * len(dataset))
     test_size = len(dataset) - train_size
-    dataset_train, dataset_val = torch.utils.data.dataset.random_split(dataset,[train_size, test_size])
+    dataset_train, dataset_val = torch.utils.data.dataset.random_split(dataset, [train_size, test_size])
 
-    train_model(args, model,dataset_train, dataset_val)
-    # plot the loss graphs from the training file.
-    plt.plot(train_step,loss_vals)
+    train_model(args, model, dataset_train, dataset_val, writer)
+
+    # Plot the loss graphs
+    plt.plot(train_step, loss_vals)
     plt.xlabel("Train Steps")
     plt.ylabel("Train Loss")
-    plt.savefig('train_loss(%d,%f,%f).png'%(args.nb_epoch,args.learning_rate,args.keep_prob))
+    plt.savefig('train_loss.png')
     plt.clf()
-    # plt.show()
-    # plor the loss graphs from the validation step
-    plt.plot(val_step,val_losses)
+
+    plt.plot(val_step, val_losses)
     plt.xlabel("Validation Steps")
     plt.ylabel("Validation Loss")
-    plt.savefig('val_loss(%d,%f,%f).png'%(args.nb_epoch,args.learning_rate,args.keep_prob))
-    # plt.show()
+    plt.savefig('val_loss.png')
     plt.clf()
 
-"""
-* @brief Runs the main function and gets the arguments from the user or 
-* takes in the default set values
-"""
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-d', help='data directory',        dest='data_dir',          type=str,   default='data')
-    parser.add_argument('-m', help='model directory',       dest='model_dir',         type=str,   default='models')
-    parser.add_argument('-t', help='train size fraction',   dest='train_size',        type=float, default=0.8)
-    parser.add_argument('-k', help='drop out probability',  dest='keep_prob',         type=float, default=0.5)
-    parser.add_argument('-n', help='number of epochs',      dest='nb_epoch',          type=int,   default=10)
-    parser.add_argument('-s', help='samples per epoch',     dest='samples_per_epoch', type=int,   default=20000)
-    parser.add_argument('-b', help='batch size',            dest='batch_size',        type=int,   default=40)
-    parser.add_argument('-l', help='learning rate',         dest='learning_rate',     type=float, default=1.0e-4)
+    parser.add_argument('-d', help='data directory', dest='data_dir', type=str, default='data')
+    parser.add_argument('-m', help='model directory', dest='model_dir', type=str, default='models')
+    parser.add_argument('-t', help='train size fraction', dest='train_size', type=float, default=0.8)
+    parser.add_argument('-k', help='drop out probability', dest='keep_prob', type=float, default=0.5)
+    parser.add_argument('-n', help='number of epochs', dest='nb_epoch', type=int, default=10)
+    parser.add_argument('-s', help='samples per epoch', dest='samples_per_epoch', type=int, default=20000)
+    parser.add_argument('-b', help='batch size', dest='batch_size', type=int, default=40)
+    parser.add_argument('-l', help='learning rate', dest='learning_rate', type=float, default=1.0e-4)
 
     args = parser.parse_args()
-
     main(args)
