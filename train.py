@@ -1,3 +1,10 @@
+"""
+  *  @copyright (c) 2020 Charan Karthikeyan P V, Nagireddi Jagadesh Nischal
+  *  @file    train.py
+  *  @author  Charan Karthikeyan P V, Nagireddi Jagadesh Nischal
+  *
+  *  @brief Main file to train and evaluate the model.  
+ """
 import os
 import time
 import itertools
@@ -12,7 +19,7 @@ from torch.utils.data import DataLoader
 from tensorboard_logger import configure, log_value
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
 import matplotlib.pyplot as plt
-from network_model import model_cnn, resnet_model
+from network_model import model_cnn
 from data_extractor import Features
 import utils
 import argparse
@@ -45,10 +52,11 @@ def train_model(args, model, dataset_train, dataset_val):
     for epoch in range(args.nb_epoch): # runs for the number of eposchs set in the arguments
         sampler = RandomSampler(dataset_train, replacement=True, num_samples=args.samples_per_epoch)
         for i, sample_id in enumerate(sampler):
-            data = dataset_train[sample_id]
+            #未加时序帧进行训练
+            data = dataset_train[sample_id] #若前置帧不够，则正常训练放弃时序
             label = data['steering_angle'] #, data['brake'], data['speed'], data['throttle']
             img_pth, label = utils.choose_image(label)
-			# Data augmentation and processing steps           
+            # Data augmentation and processing steps           
             img = cv2.imread(data[img_pth])
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img = utils.preprocess(img)
@@ -65,6 +73,7 @@ def train_model(args, model, dataset_train, dataset_val):
             loss = criterion(out_vec,label)
 
             loss.backward()
+
             if step%imgs_per_batch==0:
                 optimizer.step()
                 optimizer.zero_grad()
@@ -171,7 +180,6 @@ def eval_model(model,dataset,num_samples):
 def main(args):
 	#build and import the network model.
     model = model_cnn()
-    #model = resnet_model()
     #Check for cuda availability
     if torch.cuda.is_available():
         model = model.cuda()
@@ -208,8 +216,7 @@ def main(args):
 """
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-d', help='data directory',        dest='data_dir',          type=str,   default='C:/Users/zhouliguo/Desktop/simulator-windows-64/data')
-    #parser.add_argument('-d', help='data directory',        dest='data_dir',          type=str,   default='data')
+    parser.add_argument('-d', help='data directory',        dest='data_dir',          type=str,   default='data')
     parser.add_argument('-m', help='model directory',       dest='model_dir',         type=str,   default='models')
     parser.add_argument('-t', help='train size fraction',   dest='train_size',        type=float, default=0.8)
     parser.add_argument('-k', help='drop out probability',  dest='keep_prob',         type=float, default=0.5)
