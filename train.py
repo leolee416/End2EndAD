@@ -160,7 +160,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', help='data directory', dest='data_dir', type=str, default='data')
     parser.add_argument('-m', help='model directory', dest='model_dir', type=str, default='models')
-    parser.add_argument('-t', help='train size fraction', dest='train_size', type=float, default=0.8)
+    parser.add_argument('-t', help='train size fraction', dest='train_size', type=float, default=0.75)
     parser.add_argument('-k', help='drop out probability', dest='keep_prob', type=float, default=0.5)
     parser.add_argument('-n', help='number of epochs', dest='nb_epoch', type=int, default=10)
     parser.add_argument('-s', help='samples per epoch', dest='samples_per_epoch', type=int, default=20000)
