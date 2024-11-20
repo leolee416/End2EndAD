@@ -26,7 +26,7 @@ from io import BytesIO
 #load our saved model
 import torch
 from torch.autograd import Variable
-from network_model import model_cnn, Model
+from network_model import ModelCNN
 
 import cv2
 
@@ -134,9 +134,8 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    #load model
-    #model = model_cnn().cuda()
-    model = Model().cuda()
+    # load model
+    model = ModelCNN().cuda()
     model.load_state_dict(torch.load(args.model_weights))
     model.eval()
 
