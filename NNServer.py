@@ -3,6 +3,8 @@ import struct
 import threading
 import numpy as np
 import cv2
+import signal
+import sys
 
 # 定义常量
 DEFAULT_PORT = 12345
@@ -136,31 +138,95 @@ def handle_client(client_socket):
 
     client_socket.close()
 
-# 主函数
-def main():
-    try:
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind(('0.0.0.0', DEFAULT_PORT))
-        server_socket.listen()
 
-        print(f"[INFO] Waiting for client connection on port {DEFAULT_PORT}...")
+class Server:
+    def __init__(self, host='0.0.0.0', port=12345, buffer_size=1024):
+        """
+        初始化服务器。
+        :param host: 服务器主机地址（默认是 0.0.0.0，监听所有接口）
+        :param port: 服务器监听端口（默认是 12345）
+        :param buffer_size: 数据缓冲区大小
+        """
+        self.host = host
+        self.port = port
+        self.buffer_size = buffer_size
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen()
+        print(f"[INFO] Server started on {self.host}:{self.port}")
 
-        while True:
-            try:
-                client_socket, addr = server_socket.accept()
-                print(f"Client connected from {addr}")
+    def accept_client(self):
+        """
+        等待客户端连接。
+        :return: 返回客户端 socket 和地址。
+        """
+        client_socket, addr = self.server_socket.accept()
+        print(f"[INFO] Client connected from {addr}")
+        return client_socket, addr
 
-                client_handler = threading.Thread(target=handle_client, args=(client_socket,))
-                client_handler.start()
-            except KeyboardInterrupt:
-                print("[INFO] Server shutting down ...")
-                break
-    except Exception as e:
-        print(f"[ERROR] Server error: {e}")
-    finally:
-        server_socket.close()
+    def handle_client(self, client_socket, handler_function):
+        """
+        处理单个客户端连接。
+        :param client_socket: 客户端 socket
+        :param handler_function: 用于处理接收到的数据包的函数
+        """
+        with client_socket:
+            while True:
+                try:
+                    # 接收数据
+                    data = client_socket.recv(self.buffer_size)
+                    if not data:
+                        print("[WARNING] Client disconnected.")
+                        break
+
+                    # 调用处理函数
+                    response = handler_function(data)
+                    if response:
+                        client_socket.sendall(response.encode('utf-8'))
+                except Exception as e:
+                    print(f"[ERROR] Exception: {e}")
+                    break
+
+    def run(self, handler_function):
+        """
+        启动服务器并处理连接。
+        :param handler_function: 用于处理接收到的数据包的函数
+        """
+        print("[INFO] Server is running...")
+        try:
+            while True:
+                client_socket, addr = self.accept_client()
+                client_thread = threading.Thread(target=self.handle_client, args=(client_socket, handler_function))
+                client_thread.start()
+        except KeyboardInterrupt:
+            print("[INFO] Server shutting down...")
+        finally:
+            self.server_socket.close()
+# # 主函数
+# def main():
+#     try:
+#         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#         server_socket.bind(('0.0.0.0', DEFAULT_PORT))
+#         server_socket.listen()
+
+#         print(f"[INFO] Waiting for client connection on port {DEFAULT_PORT}...")
+
+#         while True:
+#             try:
+#                 client_socket, addr = server_socket.accept()
+#                 print(f"Client connected from {addr}")
+
+#                 client_handler = threading.Thread(target=handle_client, args=(client_socket,))
+#                 client_handler.start()
+#             except KeyboardInterrupt:
+#                 print("[INFO] Server shutting down ...")
+#                 break
+#     except Exception as e:
+#         print(f"[ERROR] Server error: {e}")
+#     finally:
+#         server_socket.close()
 
     
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
