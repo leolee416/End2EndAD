@@ -122,7 +122,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--model_weights',
         type=str,
-        default='models/model_weights.pth',
+        default='models/checkpoint_epoch_straight_big_1st_10.pth',
         help='Path to model h5 file. Model should be on the same path.'
     )
     parser.add_argument(
