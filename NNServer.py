@@ -3,8 +3,7 @@ import struct
 import threading
 import numpy as np
 import cv2
-import signal
-import sys
+from drive import AutoDrive
 
 # 定义常量
 DEFAULT_PORT = 12345
@@ -58,9 +57,8 @@ def show_image(data):
 
 # 处理数据
 def process_data(data_package):
-    print("[INFO] Processing data...")
     show_image(data_package.ImageData)
-    print(f"[INFO] Vehicle state: Direction ={data_package.Direction}, Position={data_package.Position.X, data_package.Position.Y, data_package.Position.Z}")
+    print(data_package.Direction, data_package.Position.X, data_package.Position.Y, data_package.Position.Z)
 
 # 反序列化数据包
 def deserialize_vehicle_data(data):
@@ -103,130 +101,83 @@ def deserialize_vehicle_data(data):
     return package
 
 # 处理客户端连接
-def handle_client(client_socket):
-    print("[INFO] Client handler started...")
-
+def handle_client(client_socket, auto_drive):
     recvbuf = bytearray(DEFAULT_BUFLEN)
 
     while True:
         try:
+            # 接收数据包
             bytes_received = client_socket.recv_into(recvbuf)
             if bytes_received > 0:
-                print(f"[INFO] Received {bytes_received} bytes from client.")
                 data_package = deserialize_vehicle_data(recvbuf)
+
+                # 检查数据包完整性
                 total_size = IMAGE_WIDTH * IMAGE_HEIGHT * IMAGE_CHANNELS * NUM_IMAGES
                 if len(data_package.ImageData) != total_size:
-                    print(f"[ERROR] Data size mismatch: expected {total_size} bytes, received {len(recvbuf)} bytes")
+                    print(f"Data size mismatch: expected {total_size} bytes, received {len(recvbuf)} bytes")
                     response = f"Data size mismatch: expected {total_size} bytes, received {len(recvbuf)} bytes"
                     client_socket.sendall(response.encode('utf-8'))
                 else:
-                    print("[INFO] Successfully received image data.")
-                    process_data(data_package)
+                    # 使用 AutoDrive 处理图像，生成控制信号
+                    steering, throttle, brake = process_client_data(data_package, auto_drive)
+                    # throttle = abs(throttle)
+                    # brake = abs(brake)
+                     # 发送响应 (throttle;brake;steering)
+                    response = f"{2*throttle};0;{2*steering}"
+                    print(f"[INFO] Prediction: Throttle={2*throttle},  Brake={2*brake},Steering={2*steering}")
 
-                # 发送响应 (throttle;brake;steering)
-                response = "1;0;0"
-                client_socket.sendall(response.encode('utf-8'))
+                    # response = "1;0;0"
+                    client_socket.sendall(response.encode('utf-8'))
             else:
-                print("[WARNING] Client disconnected!")
+                print("Connection closing...")
                 break
         except Exception as e:
-            print(f"[ERROR] Exception in client handler: {e}")
-            break
-        except KeyboardInterrupt:
-            print("[INFO] Server shutting down ...")
+            print(f"Exception: {e}")
             break
 
     client_socket.close()
 
+# 从数据包中处理图像并调用 AutoDrive
+def process_client_data(data_package, auto_drive):
+    IMAGE_W = IMAGE_WIDTH
+    IMAGE_H = IMAGE_HEIGHT
+    IMAGE_C = IMAGE_CHANNELS
 
-class Server:
-    def __init__(self, host='0.0.0.0', port=12345, buffer_size=1024):
-        """
-        初始化服务器。
-        :param host: 服务器主机地址（默认是 0.0.0.0，监听所有接口）
-        :param port: 服务器监听端口（默认是 12345）
-        :param buffer_size: 数据缓冲区大小
-        """
-        self.host = host
-        self.port = port
-        self.buffer_size = buffer_size
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen()
-        print(f"[INFO] Server started on {self.host}:{self.port}")
+    try:
+        # 获取第二张图片（中间摄像头图像）
+        second_image_start = IMAGE_W * IMAGE_H * IMAGE_C
+        second_image_end = 2 * second_image_start
+        second_image_data = data_package.ImageData[second_image_start:second_image_end]
 
-    def accept_client(self):
-        """
-        等待客户端连接。
-        :return: 返回客户端 socket 和地址。
-        """
-        client_socket, addr = self.server_socket.accept()
-        print(f"[INFO] Client connected from {addr}")
-        return client_socket, addr
+        # 解码为 NumPy 数组
+        second_image = np.frombuffer(second_image_data, dtype=np.uint8).reshape(IMAGE_H, IMAGE_W, IMAGE_C)
 
-    def handle_client(self, client_socket, handler_function):
-        """
-        处理单个客户端连接。
-        :param client_socket: 客户端 socket
-        :param handler_function: 用于处理接收到的数据包的函数
-        """
-        with client_socket:
-            while True:
-                try:
-                    # 接收数据
-                    data = client_socket.recv(self.buffer_size)
-                    if not data:
-                        print("[WARNING] Client disconnected.")
-                        break
+        # 使用 AutoDrive 模块预测控制信号
+        return auto_drive.predict_control(second_image)
+    except Exception as e:
+        print(f"[ERROR] Failed to process client data: {e}")
+        return 0.0, 0.0, 1.0  # 默认值
 
-                    # 调用处理函数
-                    response = handler_function(data)
-                    if response:
-                        client_socket.sendall(response.encode('utf-8'))
-                except Exception as e:
-                    print(f"[ERROR] Exception: {e}")
-                    break
+# 主函数
+def main():
+    # 初始化 AutoDrive 模块
+    model_path = "models\checkpoint_epoch_straight_big_1st_10.pth"
+    auto_drive = AutoDrive(model_path)
 
-    def run(self, handler_function):
-        """
-        启动服务器并处理连接。
-        :param handler_function: 用于处理接收到的数据包的函数
-        """
-        print("[INFO] Server is running...")
-        try:
-            while True:
-                client_socket, addr = self.accept_client()
-                client_thread = threading.Thread(target=self.handle_client, args=(client_socket, handler_function))
-                client_thread.start()
-        except KeyboardInterrupt:
-            print("[INFO] Server shutting down...")
-        finally:
-            self.server_socket.close()
-# # 主函数
-# def main():
-#     try:
-#         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#         server_socket.bind(('0.0.0.0', DEFAULT_PORT))
-#         server_socket.listen()
+    # 启动服务器
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(('0.0.0.0', DEFAULT_PORT))
+    server_socket.listen()
 
-#         print(f"[INFO] Waiting for client connection on port {DEFAULT_PORT}...")
+    print(f"Waiting for client connection on port {DEFAULT_PORT}...")
 
-#         while True:
-#             try:
-#                 client_socket, addr = server_socket.accept()
-#                 print(f"Client connected from {addr}")
+    while True:
+        client_socket, addr = server_socket.accept()
+        print(f"Client connected from {addr}")
 
-#                 client_handler = threading.Thread(target=handle_client, args=(client_socket,))
-#                 client_handler.start()
-#             except KeyboardInterrupt:
-#                 print("[INFO] Server shutting down ...")
-#                 break
-#     except Exception as e:
-#         print(f"[ERROR] Server error: {e}")
-#     finally:
-#         server_socket.close()
+        # 创建客户端处理线程
+        client_handler = threading.Thread(target=handle_client, args=(client_socket, auto_drive))
+        client_handler.start()
 
-    
-
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()

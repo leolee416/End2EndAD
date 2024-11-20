@@ -1,8 +1,8 @@
-import NNServer
+import NNServer_2
 import numpy as np
 import struct
 from torchvision import transforms
-from network_model import ModelCNN
+from network_model_for_run import ModelCNN
 import torch
 from PIL import Image
 
@@ -17,55 +17,72 @@ class AutoDrive:
 
     def load_model(self, model_path):
         """
-        加载模型参数，支持两种情况：
-        1. 提供仅包含模型参数的 state_dict 文件。
-        2. 提供完整的训练检查点文件。
+        Load the model to the specified device (GPU or CPU)
         """
-        model = ModelCNN()  # 初始化你的模型
-        torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # 加载文件
-        checkpoint = torch.load(model_path, map_location=torch.device, weights_only= True)  
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device
 
-        # 检查文件内容，判断是 state_dict 还是完整检查点
-        if 'model_state_dict' in checkpoint:  # 检查点文件
-            print("[INFO] Loading from checkpoint...")
-            model.load_state_dict(checkpoint['model_state_dict'])
-        elif isinstance(checkpoint, dict):  # 仅包含 state_dict 的权重文件
-            print("[INFO] Loading from state_dict...")
-            model.load_state_dict(checkpoint)
-        else:
-            raise ValueError("[ERROR] Unsupported file format. Ensure the file is either a state_dict or a checkpoint.")
-
-        model.eval()  # 设置为评估模式
-        print("[INFO] Model loaded successfully!")
+        model = ModelCNN()
+        try:
+            checkpoint = torch.load(model_path, map_location=device, weights_only= True)
+            if 'model_state_dict' in checkpoint:
+                print("[INFO] Loading from checkpoint...")
+                model.load_state_dict(checkpoint['model_state_dict'])
+            elif isinstance(checkpoint, dict):
+                print("[INFO] Loading from state_dict...")
+                model.load_state_dict(checkpoint)
+            else:
+                raise ValueError("[ERROR] Unsupported file format.")
+            model.to(device)  # 模型放置到设备
+            model.eval()
+            print(f"[INFO] Model loaded successfully on {device}!")
+        except Exception as e:
+            raise RuntimeError(f"[ERROR] Failed to load model: {e}")
         return model
     
     def preprocess_image(self, image_data):
         """
-        preprocesse the image stream:
-        Normalization, transpose
+        Preprocess the image stream:
+        - Resize
+        - Normalize
+        - Convert to the same device as the model
         """
-        image = Image.fromarray(image_data)
-
-        image_tensor = self.transforms(image)
-        return image_tensor.unsqueeze(0)
+        try:
+            image = Image.fromarray(image_data)
+            image_tensor = self.transforms(image).to(self.device)  # 将数据移动到模型所在设备
+            return image_tensor.unsqueeze(0)  # 增加 batch 维度
+        except Exception as e:
+            print(f"[ERROR] Preprocessing failed: {e}")
+            return None
     
     def predict_control(self, image):
-        with torch.no_grad():
+        try:
             image_tensor = self.preprocess_image(image)
-            output = self.model(image_tensor)
-            Steering, Throttle, Brake = output[0].numpy()
-        print("[INFO] Prediction: Steering = {Steering}, Throttle = {Throttle}, Brake = {Brake}")
-        return Steering, Throttle, Brake
+            if image_tensor is None:
+                return 0.0, 0.0, 1.0  # 默认值
+
+            with torch.no_grad():
+                output = self.model(image_tensor)  # 获取模型输出
+                
+                # 检查输出是否包含三个值
+                if output.shape[-1] != 3:
+                    raise ValueError(f"Unexpected output shape: {output.shape}. Expected shape with 3 values.")
+
+                steering, throttle, brake = output[0].cpu().numpy()  # 输出转移到 CPU
+            return steering, throttle, brake
+        except Exception as e:
+            print(f"[ERROR] Prediction failed: {e}")
+            return 0.0, 0.0, 1.0  # 默认值
+
     
 def process_client_data(data_package, auto_dirve):
     """
     accept stream data and autodrive object.
     Send control data to cclient
     """
-    IMAGE_W = NNServer.IMAGE_WIDTH
-    IMAGE_H = NNServer.IMAGE_HEIGHT
-    IMAGE_C = NNServer.IMAGE_CHANNELS
+    IMAGE_W = NNServer_2.IMAGE_WIDTH
+    IMAGE_H = NNServer_2.IMAGE_HEIGHT
+    IMAGE_C = NNServer_2.IMAGE_CHANNELS
             
     # Get the second image(Mid camera image)
     second_image_start = IMAGE_W * IMAGE_H * IMAGE_C # all images are combined into 3*H x 3*W x 3 "big picture"
