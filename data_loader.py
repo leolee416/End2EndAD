@@ -136,7 +136,6 @@ class SimulatorDataset(Dataset):
         # 检查是否为单通道，若是则转换为 3 通道
         if isinstance(image, torch.Tensor) and image.size(0) == 1:
             image = image.repeat(3, 1, 1)
-        print(f"check the channels")
 
         # 检查处理后的图像类型和形状
         if not isinstance(image, torch.Tensor):
