@@ -56,8 +56,9 @@ def show_image(data):
 
 # 处理数据
 def process_data(data_package):
+    print("[INFO] Processing data...")
     show_image(data_package.ImageData)
-    print(data_package.Direction, data_package.Position.X, data_package.Position.Y, data_package.Position.Z)
+    print(f"[INFO] Vehicle state: Direction ={data_package.Direction}, Position={data_package.Position.X, data_package.Position.Y, data_package.Position.Z}")
 
 # 反序列化数据包
 def deserialize_vehicle_data(data):
@@ -101,47 +102,65 @@ def deserialize_vehicle_data(data):
 
 # 处理客户端连接
 def handle_client(client_socket):
+    print("[INFO] Client handler started...")
+
     recvbuf = bytearray(DEFAULT_BUFLEN)
 
     while True:
         try:
             bytes_received = client_socket.recv_into(recvbuf)
             if bytes_received > 0:
+                print(f"[INFO] Received {bytes_received} bytes from client.")
                 data_package = deserialize_vehicle_data(recvbuf)
                 total_size = IMAGE_WIDTH * IMAGE_HEIGHT * IMAGE_CHANNELS * NUM_IMAGES
                 if len(data_package.ImageData) != total_size:
-                    print(f"Data size mismatch: expected {total_size} bytes, received {len(recvbuf)} bytes")
+                    print(f"[ERROR] Data size mismatch: expected {total_size} bytes, received {len(recvbuf)} bytes")
                     response = f"Data size mismatch: expected {total_size} bytes, received {len(recvbuf)} bytes"
                     client_socket.sendall(response.encode('utf-8'))
                 else:
+                    print("[INFO] Successfully received image data.")
                     process_data(data_package)
 
                 # 发送响应 (throttle;brake;steering)
                 response = "1;0;0"
                 client_socket.sendall(response.encode('utf-8'))
             else:
-                print("Connection closing...")
+                print("[WARNING] Client disconnected!")
                 break
         except Exception as e:
-            print(f"Exception: {e}")
+            print(f"[ERROR] Exception in client handler: {e}")
+            break
+        except KeyboardInterrupt:
+            print("[INFO] Server shutting down ...")
             break
 
     client_socket.close()
 
 # 主函数
 def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('0.0.0.0', DEFAULT_PORT))
-    server_socket.listen()
+    try:
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind(('0.0.0.0', DEFAULT_PORT))
+        server_socket.listen()
 
-    print(f"Waiting for client connection on port {DEFAULT_PORT}...")
+        print(f"[INFO] Waiting for client connection on port {DEFAULT_PORT}...")
 
-    while True:
-        client_socket, addr = server_socket.accept()
-        print(f"Client connected from {addr}")
+        while True:
+            try:
+                client_socket, addr = server_socket.accept()
+                print(f"Client connected from {addr}")
 
-        client_handler = threading.Thread(target=handle_client, args=(client_socket,))
-        client_handler.start()
+                client_handler = threading.Thread(target=handle_client, args=(client_socket,))
+                client_handler.start()
+            except KeyboardInterrupt:
+                print("[INFO] Server shutting down ...")
+                break
+    except Exception as e:
+        print(f"[ERROR] Server error: {e}")
+    finally:
+        server_socket.close()
+
+    
 
 if __name__ == "__main__":
     main()
