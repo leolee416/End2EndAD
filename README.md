@@ -1,5 +1,12 @@
 # End2EndAD
 
+## Models
+
+|     Branch      |         Model        |
+|-----------------|----------------------|  
+|    `resnet`     |use resnet train AS NN|
+| `to be added...`|   to be added...     |
+
 ## Datasets
 All data is collected using the "CitySample" simulator.
 
