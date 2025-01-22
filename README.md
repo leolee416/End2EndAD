@@ -5,6 +5,8 @@
 |     Branch      |         Model        |
 |-----------------|----------------------|  
 |    `resnet`     |use resnet train AS NN|
+|      `cnn`      |   use cnn train AS NN|
+|      `lstm`     |use cnn+lstm train AS NN|
 | `to be added...`|   to be added...     |
 
 ## Datasets
