@@ -1,0 +1,7 @@
+train: /home/zhenjiang-li/YOLOv11_traffic_light/datasets/garching_simplecity_traffic_light/images/train
+val: /home/zhenjiang-li/YOLOv11_traffic_light/datasets/garching_simplecity_traffic_light/images/val
+
+nc: 4  # 类别数量，根据你的类别定义
+names: ['green', 'red', 'off', 'yellow']
+
+# yolo detect predict model=yolo11n.pt source=workspace/imagefolder
